@@ -1,15 +1,15 @@
-/**:
+fast_calib:
   ros__parameters:
-    # Camera intrinsics
+    # Camera intrinsics  
     # mid360
-    # fx: 843.501050605967
-    # fy: 845.199690011973
-    # cx: 321.017429415352
-    # cy: 239.294896816737
-    # k1: -0.465219389887045
-    # k2: 0.237050091701749
-    # p1: 0.00521922785740506
-    # p2: 0.000418186016514835
+    fx: 522.123514287681
+    fy: 522.275153384482
+    cx: 773.466430504725
+    cy: 534.053165700174
+    k1: 0.00324949759262203
+    k2: -0.0171040538369167
+    p1: 0.000669657443377146
+    p2: -0.000350205468789575
 
     # avia
     # fx: 1215.31801774424
@@ -31,58 +31,26 @@
     # p1: -0.000731746350601389
     # p2: -0.000201478932371979
 
-    # multi-scene
-    fx: 2478.48702288166
-    fy: 2478.58544825456
-    cx: 1230.99707596681
-    cy: 1025.66149498072
-    k1: -0.0493178189623200
-    k2: 0.147394487986097
-    p1: -0.00127118592043482
-    p2: -0.00200379689523022
-
     # Calibration target parameters
     marker_size: 0.20 # ArUco marker size (our test data uses 0.16m; adjust to match your marker size)
-    delta_width_qr_center: 0.55 # Half the distance between the centers of two markers in the horizontal direction
+    delta_width_qr_center: 0.55 # Half the distance between the centers of two markers in the horizontal direction 
     delta_height_qr_center: 0.35 # Half the distance between the centers of two markers in the vertical direction
     delta_width_circles: 0.5 # Distance between the centers of two circles in the horizontal direction
     delta_height_circles: 0.4 # Distance between the centers of two circles in the vertical direction
-    circle_radius: 0.12 # Radius of the circle
+    circle_radius: 0.12 # Radius of the circle 
 
     # Distance filter
-    # x_min: 3.0 # avia and mid360: 2.0 ouster: 1.5
-    # x_max: 5.0
-    # y_min: -0.5
-    # y_max: 3.0
-    # z_min: 0.0 # avia and mid360: -0.5 ouster: -0.8
-    # z_max: 2.0
-
-    # multi_scene_11
-    # x_min: 2.0
-    # x_max: 5.0
-    # y_min: -1.0
-    # y_max: 1.0
-    # z_min: 0.0
-    # z_max: 2.0
-    # multi_scene_22
-    # x_min: 2.0
-    # x_max: 5.0
-    # y_min: -4.0
-    # y_max: 1.0
-    # z_min: 0.0
-    # z_max: 2.0
-    # multi_scene_33
-    x_min: 2.0
-    x_max: 5.0
-    y_min: -1.0
-    y_max: 4.0
-    z_min: 0.0
+    x_min: 1.5
+    x_max: 3.0
+    y_min: -1.5
+    y_max: 2.0
+    z_min: -0.5 # avia and mid360: -0.5 ouster: -0.8
     z_max: 2.0
 
-    # Input. Override these from launch args or set absolute paths here.
-    lidar_topic: "/points"
-    bag_path: ""
-    image_path: ""
+    # Input
+    lidar_topic: "/livox/lidar" # /ouster/points /livox/lidar
+    bag_path: "/home/averageandyyy/workspaces/tmp_ws/src/FAST-Calib-ROS2/calib_data/mid360_11"
+    image_path: "/home/averageandyyy/workspaces/tmp_ws/src/FAST-Calib-ROS2/calib_data/mid360_11/11.png"
 
-    # Output. This directory must exist.
-    output_path: "/tmp"
+    # Output
+    output_path: "/home/averageandyyy/workspaces/tmp_ws/src/FAST-Calib-ROS2/output"
