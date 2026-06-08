@@ -14,8 +14,6 @@ which is included as part of this source code package.
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/common/transforms.h>
-#include <pcl_ros/point_cloud.h>
-#include <pcl_ros/filters/passthrough.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/features/boundary.h>
@@ -26,7 +24,7 @@ which is included as part of this source code package.
 #include <pcl/registration/transformation_estimation_svd.h>
 #include <cmath>
 #include <opencv2/opencv.hpp>
-#include <tf/tf.h>
+#include <rclcpp/rclcpp.hpp>
 #include "color.h"
 
 using namespace std;
@@ -68,33 +66,33 @@ struct Params {
 };
 
 // 读取参数
-Params loadParameters(ros::NodeHandle &nh) {
+Params loadParameters(const rclcpp::Node::SharedPtr &node) {
   Params params;
-  nh.param("fx", params.fx, 1215.31801774424);
-  nh.param("fy", params.fy, 1214.72961288138);
-  nh.param("cx", params.cx, 1047.86571859677);
-  nh.param("cy", params.cy, 745.068353101898);
-  nh.param("k1", params.k1, -0.33574781188503);
-  nh.param("k2", params.k2, 0.10996870793601);
-  nh.param("p1", params.p1, 0.000157303079833973);
-  nh.param("p2", params.p2, 0.000544930726278493);
-  nh.param("marker_size", params.marker_size, 0.2);
-  nh.param("delta_width_qr_center", params.delta_width_qr_center, 0.55);
-  nh.param("delta_height_qr_center", params.delta_height_qr_center, 0.35);
-  nh.param("delta_width_circles", params.delta_width_circles, 0.5);
-  nh.param("delta_height_circles", params.delta_height_circles, 0.4);
-  nh.param("min_detected_markers", params.min_detected_markers, 3);
-  nh.param("circle_radius", params.circle_radius, 0.12);
-  nh.param("image_path", params.image_path, string("/home/chunran/calib_ws/src/fast_calib/data/image.png"));
-  nh.param("bag_path", params.bag_path, string("/home/chunran/calib_ws/src/fast_calib/data/input.bag"));
-  nh.param("lidar_topic", params.lidar_topic, string("/livox/lidar"));
-  nh.param("output_path", params.output_path, string("/home/chunran/calib_ws/src/fast_calib/output"));
-  nh.param("x_min", params.x_min, 1.5);
-  nh.param("x_max", params.x_max, 3.0);
-  nh.param("y_min", params.y_min, -1.5);
-  nh.param("y_max", params.y_max, 2.0);
-  nh.param("z_min", params.z_min, -0.5);
-  nh.param("z_max", params.z_max, 2.0);
+  params.fx = node->declare_parameter<double>("fx", 1215.31801774424);
+  params.fy = node->declare_parameter<double>("fy", 1214.72961288138);
+  params.cx = node->declare_parameter<double>("cx", 1047.86571859677);
+  params.cy = node->declare_parameter<double>("cy", 745.068353101898);
+  params.k1 = node->declare_parameter<double>("k1", -0.33574781188503);
+  params.k2 = node->declare_parameter<double>("k2", 0.10996870793601);
+  params.p1 = node->declare_parameter<double>("p1", 0.000157303079833973);
+  params.p2 = node->declare_parameter<double>("p2", 0.000544930726278493);
+  params.marker_size = node->declare_parameter<double>("marker_size", 0.2);
+  params.delta_width_qr_center = node->declare_parameter<double>("delta_width_qr_center", 0.55);
+  params.delta_height_qr_center = node->declare_parameter<double>("delta_height_qr_center", 0.35);
+  params.delta_width_circles = node->declare_parameter<double>("delta_width_circles", 0.5);
+  params.delta_height_circles = node->declare_parameter<double>("delta_height_circles", 0.4);
+  params.min_detected_markers = node->declare_parameter<int>("min_detected_markers", 3);
+  params.circle_radius = node->declare_parameter<double>("circle_radius", 0.12);
+  params.image_path = node->declare_parameter<string>("image_path", string("/home/chunran/calib_ws/src/fast_calib/data/image.png"));
+  params.bag_path = node->declare_parameter<string>("bag_path", string("/home/chunran/calib_ws/src/fast_calib/data/input"));
+  params.lidar_topic = node->declare_parameter<string>("lidar_topic", string("/livox/lidar"));
+  params.output_path = node->declare_parameter<string>("output_path", string("/home/chunran/calib_ws/src/fast_calib/output"));
+  params.x_min = node->declare_parameter<double>("x_min", 1.5);
+  params.x_max = node->declare_parameter<double>("x_max", 3.0);
+  params.y_min = node->declare_parameter<double>("y_min", -1.5);
+  params.y_max = node->declare_parameter<double>("y_max", 2.0);
+  params.z_min = node->declare_parameter<double>("z_min", -0.5);
+  params.z_max = node->declare_parameter<double>("z_max", 2.0);
   return params;
 }
 

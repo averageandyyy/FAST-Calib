@@ -1,263 +1,168 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-功能：
-1) 自动检测 rosbag 中雷达点云类型：
-   - sensor_msgs/PointCloud2  (如 /hesai/pandar)
-   - livox_ros_driver/CustomMsg (如 /livox/lidar)
-2) 按各自的解析方式把点云导出成一个带 intensity 的 PCD 文件 (x y z intensity, ASCII)
-3) 使用 Open3D 对该 PCD 进行交互选点（至少 4 个点），并根据 4 个点计算包围范围，
-   保存为同名 .txt 文件。
+ROS2 helper for estimating FAST-Calib distance filter bounds.
 
-依赖：
-    - rosbag
-    - sensor_msgs.point_cloud2
-    - open3d, numpy
-
-用法示例：
-    python FAST-Calib-tool.py
-    python FAST-Calib-tool.py /path/to/data.bag /path/to/output_dir
+The tool reads a ROS2 rosbag2 directory, exports a sensor_msgs/msg/PointCloud2
+topic to an ASCII PCD, then lets you pick at least four points around the board
+in Open3D. It writes suggested x/y/z min/max crop values beside the PCD.
 """
 
 import os
 import sys
-import numpy as np
-import rosbag
-import sensor_msgs.point_cloud2 as pc2
-import open3d as o3d
 
-# ===================== 通用：保存 PCD =====================
+import numpy as np
+import open3d as o3d
+import rosbag2_py
+import sensor_msgs_py.point_cloud2 as pc2
+from rclpy.serialization import deserialize_message
+from sensor_msgs.msg import PointCloud2
+
+
+POINTCLOUD2_TYPE = "sensor_msgs/msg/PointCloud2"
+
 
 def save_pcd_with_intensity(points, intensities, output_path):
-    """
-    保存点云为带 intensity 字段的 PCD 文件 (ASCII 格式)
-    points: list/ndarray of [x, y, z]
-    intensities: list/ndarray of intensity
-    """
-    N = len(points)
+    """Save points as ASCII PCD with x/y/z/intensity fields."""
+    n_points = len(points)
     header = f"""# .PCD v0.7 - Point Cloud Data file format
 VERSION 0.7
 FIELDS x y z intensity
 SIZE 4 4 4 4
 TYPE F F F F
 COUNT 1 1 1 1
-WIDTH {N}
+WIDTH {n_points}
 HEIGHT 1
-POINTS {N}
+POINTS {n_points}
 DATA ascii
 """
-    with open(output_path, 'w') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(header)
-        for (x, y, z), inten in zip(points, intensities):
-            f.write(f"{x} {y} {z} {inten}\n")
-    print(f"[PCD] 保存带 intensity 字段的点云到: {output_path}")
+        for (x, y, z), intensity in zip(points, intensities):
+            f.write(f"{x} {y} {z} {intensity}\n")
+    print(f"[PCD] Saved point cloud with intensity to: {output_path}")
 
-# ===================== 情况 1：PointCloud2 =====================
+
+def open_reader(bag_uri):
+    reader = rosbag2_py.SequentialReader()
+    storage_options = rosbag2_py.StorageOptions(uri=bag_uri, storage_id="sqlite3")
+    converter_options = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr",
+        output_serialization_format="cdr",
+    )
+    reader.open(storage_options, converter_options)
+    return reader
+
+
+def pointcloud2_topics(bag_uri):
+    reader = open_reader(bag_uri)
+    return [
+        topic.name
+        for topic in reader.get_all_topics_and_types()
+        if topic.type == POINTCLOUD2_TYPE
+    ]
+
 
 def find_intensity_field(msg):
-    """在 PointCloud2 的 fields 中自动检测强度字段名称"""
-    candidates = ["intensity", "reflectivity", "i", "ref"]
+    """Detect a usable intensity field in PointCloud2 fields."""
+    candidates = {"intensity", "reflectivity", "i", "ref"}
     for field in msg.fields:
         if field.name.lower() in candidates:
             return field.name
     return None
 
 
+def first_pointcloud2_message(bag_uri, topic_name):
+    reader = open_reader(bag_uri)
+    while reader.has_next():
+        topic, data, _ = reader.read_next()
+        if topic == topic_name:
+            return deserialize_message(data, PointCloud2)
+    return None
+
+
 def convert_pointcloud2_bag_to_pcd(
-    bag_file,
+    bag_uri,
     output_dir,
-    topic_name="/hesai/pandar",                        # 如有不同，可改成 topic 名称
-    pcd_name="sensor_PointCloud2_inten_ascii.pcd"
+    topic_name,
+    pcd_name="sensor_PointCloud2_inten_ascii.pcd",
 ):
-    """
-    将 rosbag 中 PointCloud2 类型的点云合并导出为一个 PCD 文件。
-    保持原始雷达坐标，不做坐标变换。
-    """
-    print(f"[Bag] 打开 rosbag: {bag_file}")
-    bag = rosbag.Bag(bag_file, "r")
+    """Export one ROS2 PointCloud2 topic from a rosbag2 directory into PCD."""
+    print(f"[Bag] Opening rosbag2: {bag_uri}")
 
-    # 1) 先检测强度字段
-    intensity_field = None
-    for topic, msg, t in bag.read_messages():
-        if msg._type == "sensor_msgs/PointCloud2":
-            intensity_field = find_intensity_field(msg)
-            if intensity_field:
-                print(f"[Bag] 检测到 intensity 字段: {intensity_field}")
-            break
-
-    if not intensity_field:
-        print("[ERROR] 未找到强度字段! 退出 PointCloud2 转换。", file=sys.stderr)
-        bag.close()
+    first_msg = first_pointcloud2_message(bag_uri, topic_name)
+    if first_msg is None:
+        print(f"[ERROR] No PointCloud2 messages found on topic '{topic_name}'", file=sys.stderr)
         return None
 
-    # 2) 读取指定 topic 的所有点云
-    all_points = []
-    all_intensities = []
-
-    print(f"[Bag] 开始从 topic '{topic_name}' 读取 PointCloud2 点云...")
-
-    for topic, msg, t in bag.read_messages(topics=[topic_name]):
-        if msg._type == "sensor_msgs/PointCloud2":
-            try:
-                field_names = ["x", "y", "z", intensity_field]
-                for point in pc2.read_points(msg, field_names=field_names, skip_nans=True):
-                    all_points.append([point[0], point[1], point[2]])
-                    all_intensities.append(point[3])  # 强度是第四个字段
-            except Exception as e:
-                print(f"[ERROR] 读取错误: {str(e)}", file=sys.stderr)
-                continue
-
-    bag.close()
-
-    if not all_points:
-        print("[ERROR] 未找到 PointCloud2 点云数据！", file=sys.stderr)
-        return None
-
-    output_path = os.path.join(output_dir, pcd_name)
-    save_pcd_with_intensity(all_points, all_intensities, output_path)
-    return output_path
-
-# ===================== 情况 2：Livox CustomMsg =====================
-
-def parse_livox_custom_msg(msg):
-    """
-    从 livox_ros_driver/CustomMsg 中解析 x, y, z, reflectivity
-    假设 msg.points 是 CustomPoint 对象列表，字段为 x, y, z, reflectivity
-    """
-    points = []
-    intensities = []
-
-    for pt in msg.points:
-        points.append([pt.x, pt.y, pt.z])
-        intensities.append(pt.reflectivity)
-
-    return points, intensities
-
-def convert_livox_custom_bag_to_pcd(
-    bag_file,
-    output_dir,
-    topic_name="/livox/lidar",                     # 如有不同，可改成 topic 名称
-    pcd_name="livox_CustomMsg_inten_ascii.pcd"
-):
-    """
-    将 rosbag 中 livox_ros_driver/CustomMsg 类型的点云合并导出为一个 PCD 文件。
-    保持原始雷达坐标，不做坐标变换。
-    """
-    print(f"[Bag] 打开 rosbag: {bag_file}")
-    bag = rosbag.Bag(bag_file, "r")
-
-    all_points = []
-    all_intensities = []
-
-    print(f"[Bag] 开始从 topic '{topic_name}' 读取 CustomMsg 点云...")
-
-    for topic, msg, t in bag.read_messages(topics=[topic_name]):
-        if msg._type == "livox_ros_driver/CustomMsg":
-            pts, intens = parse_livox_custom_msg(msg)
-            all_points.extend(pts)
-            all_intensities.extend(intens)
-
-    bag.close()
-
-    if not all_points:
-        print("[ERROR] 未找到 Livox CustomMsg 点云数据!", file=sys.stderr)
-        return None
-
-    output_path = os.path.join(output_dir, pcd_name)
-    intensities = np.array(all_intensities, dtype=np.float32)
-    save_pcd_with_intensity(all_points, intensities, output_path)
-    return output_path
-
-# ===================== 自动检测：这个 bag 用哪种方式 =====================
-
-def detect_lidar_msg_type(bag_file):
-    """
-    在 bag 里扫一圈，检测是否有 PointCloud2 或 Livox CustomMsg。
-    返回：
-        "PointCloud2", "CustomMsg", 或 None
-    如果两种都有，默认优先 PointCloud2,并打印提示。
-    """
-    has_pc2 = False
-    has_livox = False
-
-    print(f"[Detect] 扫描 bag: {bag_file}")
-    bag = rosbag.Bag(bag_file, "r")
-
-    for topic, msg, t in bag.read_messages():
-        if msg._type == "sensor_msgs/PointCloud2":
-            has_pc2 = True
-        elif msg._type == "livox_ros_driver/CustomMsg":
-            has_livox = True
-
-        if has_pc2 and has_livox:
-            break
-
-    bag.close()
-
-    if has_pc2 and has_livox:
-        print("[Detect] 同时检测到 PointCloud2 和 Livox CustomMsg, 默认使用 PointCloud2。")
-        return "PointCloud2"
-    elif has_pc2:
-        print("[Detect] 检测到 PointCloud2 点云。")
-        return "PointCloud2"
-    elif has_livox:
-        print("[Detect] 检测到 Livox CustomMsg 点云。")
-        return "CustomMsg"
+    intensity_field = find_intensity_field(first_msg)
+    if intensity_field:
+        print(f"[Bag] Detected intensity field: {intensity_field}")
+        field_names = ["x", "y", "z", intensity_field]
     else:
-        print("[Detect] 未检测到 PointCloud2 或 Livox CustomMsg 点云。")
+        print("[Bag] No intensity field found; exporting intensity as 0.0")
+        field_names = ["x", "y", "z"]
+
+    all_points = []
+    all_intensities = []
+
+    reader = open_reader(bag_uri)
+    print(f"[Bag] Reading PointCloud2 data from topic '{topic_name}'...")
+    while reader.has_next():
+        topic, data, _ = reader.read_next()
+        if topic != topic_name:
+            continue
+
+        msg = deserialize_message(data, PointCloud2)
+        for point in pc2.read_points(msg, field_names=field_names, skip_nans=True):
+            all_points.append([point[0], point[1], point[2]])
+            all_intensities.append(point[3] if intensity_field else 0.0)
+
+    if not all_points:
+        print("[ERROR] PointCloud2 topic contained no readable points.", file=sys.stderr)
         return None
 
-# ===================== Open3D 交互选点 & 保存范围 =====================
+    output_path = os.path.join(output_dir, pcd_name)
+    save_pcd_with_intensity(all_points, np.asarray(all_intensities, dtype=np.float32), output_path)
+    return output_path
+
 
 def select_and_save_points(pcd_folder, target_pcd_name):
-    """
-    在给定目录中读取指定 PCD 文件，用 Open3D 交互式选点并保存范围。
-    """
+    """Pick points in Open3D and save x/y/z min/max crop values."""
     pcd_path = os.path.join(pcd_folder, target_pcd_name)
     if not os.path.isfile(pcd_path):
-        print(f"[ERROR] 指定的 PCD 文件不存在: {pcd_path}", file=sys.stderr)
+        print(f"[ERROR] PCD file does not exist: {pcd_path}", file=sys.stderr)
         return
 
-    # 读取点云
     pcd = o3d.io.read_point_cloud(pcd_path)
     if not pcd.has_points():
-        print(f"[ERROR] {target_pcd_name} 中没有点云数据，已跳过", file=sys.stderr)
+        print(f"[ERROR] {target_pcd_name} contains no points.", file=sys.stderr)
         return
 
-    print(f"\n正在处理: {target_pcd_name}")
-    print("请在可视化窗口中按住 Shift 用鼠标左键选择点(至少4个)，然后按 Q 键关闭窗口")
+    print(f"\nProcessing: {target_pcd_name}")
+    print("Hold Shift and left-click at least 4 board points, then press Q to close.")
 
-    # 创建可视化窗口并添加点云
     vis = o3d.visualization.VisualizerWithEditing()
-    vis.create_window(window_name=f"选择点 - {target_pcd_name}")
+    vis.create_window(window_name=f"Select points - {target_pcd_name}")
     vis.add_geometry(pcd)
-
-    # 等待用户交互（Shift+左键选点, Q 退出）
     vis.run()
     vis.destroy_window()
 
-    # 获取用户选择的点的索引
     selected_indices = vis.get_picked_points()
-
     if not selected_indices:
-        print(f"[ERROR] 未选择任何点，{target_pcd_name} 没有保存文件", file=sys.stderr)
+        print(f"[ERROR] No points selected; no file saved for {target_pcd_name}", file=sys.stderr)
         return
-
     if len(selected_indices) < 4:
-        print(f"[ERROR] 只选中了 {len(selected_indices)} 个点，少于 4 个，跳过该文件", file=sys.stderr)
+        print(f"[ERROR] Selected {len(selected_indices)} points, fewer than 4.", file=sys.stderr)
         return
 
-    # 只取前 4 个点
     selected_indices = selected_indices[:4]
-
     all_points = np.asarray(pcd.points)
-    selected_points = all_points[selected_indices, :]  # 形状 (4, 3)
+    selected_points = all_points[selected_indices, :]
 
-    # 计算四个点在各轴上的最小值和最大值
-    mins = selected_points.min(axis=0)  # [x_min_raw, y_min_raw, z_min_raw]
-    maxs = selected_points.max(axis=0)  # [x_max_raw, y_max_raw, z_max_raw]
+    mins = selected_points.min(axis=0)
+    maxs = selected_points.max(axis=0)
 
-    # 按你的定义扩展 0.2m
     x_min = mins[0] - 0.2
     x_max = maxs[0] + 0.2
     y_min = mins[1] - 0.2
@@ -265,11 +170,10 @@ def select_and_save_points(pcd_folder, target_pcd_name):
     z_min = mins[2] - 0.2
     z_max = maxs[2] + 0.2
 
-    # 生成保存文件名 (与 PCD 文件同名，改为 txt)
     base_name = os.path.splitext(target_pcd_name)[0]
     save_file = os.path.join(pcd_folder, f"{base_name}.txt")
 
-    with open(save_file, 'w') as f:
+    with open(save_file, "w", encoding="utf-8") as f:
         f.write("# 4 selected points (x y z)\n")
         for p in selected_points:
             f.write(f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}\n")
@@ -282,64 +186,58 @@ def select_and_save_points(pcd_folder, target_pcd_name):
         f.write(f"z_min: {z_min:.1f}\n")
         f.write(f"z_max: {z_max:.1f}\n")
 
-    print(f"[Save] 已保存选点与范围到: {save_file}")
-    print("点云处理完成。")
+    print(f"[Save] Saved selected points and bounds to: {save_file}")
+    print("Point cloud processing complete.")
 
-# ===================== main =====================
 
-if __name__ == "__main__":
-    # 1) 解析命令行参数：bag 路径 & 输出目录
+def main():
     if len(sys.argv) > 1:
-        bag_file = sys.argv[1]
+        bag_uri = sys.argv[1]
     else:
-        # 默认使用当前目录下的某个 bag，可以按需修改
-        bag_file = os.path.join(os.getcwd(), "all_2025-11-17-18-22-27.bag")
-        print(f"未指定 bag 文件，默认使用: {bag_file}")
+        bag_uri = os.getcwd()
+        print(f"No bag path specified; using current directory: {bag_uri}")
 
     if len(sys.argv) > 2:
         output_dir = sys.argv[2]
     else:
         output_dir = os.getcwd()
-        print(f"未指定输出目录，使用当前目录: {output_dir}")
+        print(f"No output directory specified; using current directory: {output_dir}")
 
-    if not os.path.isfile(bag_file):
-        print(f"[ERROR] bag 文件 '{bag_file}' 不存在", file=sys.stderr)
+    requested_topic = sys.argv[3] if len(sys.argv) > 3 else None
+
+    if not os.path.exists(bag_uri):
+        print(f"[ERROR] Bag path '{bag_uri}' does not exist.", file=sys.stderr)
         sys.exit(1)
-
     if not os.path.isdir(output_dir):
-        print(f"[ERROR] 输出目录 '{output_dir}' 不存在", file=sys.stderr)
+        print(f"[ERROR] Output directory '{output_dir}' does not exist.", file=sys.stderr)
         sys.exit(1)
 
-    # 不需要 rospy.init_node，完全离线工具
-
-    # 3) 自动检测 bag 中点云类型
-    msg_type = detect_lidar_msg_type(bag_file)
-    if msg_type is None:
-        print("[ERROR] 未检测到支持的雷达消息类型，退出。", file=sys.stderr)
+    topics = pointcloud2_topics(bag_uri)
+    if not topics:
+        print("[ERROR] No sensor_msgs/msg/PointCloud2 topics found in bag.", file=sys.stderr)
         sys.exit(1)
 
-    # 4) 根据类型做对应的 PCD 转换
-    if msg_type == "PointCloud2":
-        pcd_path = convert_pointcloud2_bag_to_pcd(
-            bag_file=bag_file,
-            output_dir=output_dir,
-            topic_name="/hesai/pandar",  # 如有不同，可改成 topic 名称
-            pcd_name="sensor_PointCloud2_inten_ascii.pcd"
-        )
-    else:  # "CustomMsg"
-        pcd_path = convert_livox_custom_bag_to_pcd(
-            bag_file=bag_file,
-            output_dir=output_dir,
-            topic_name="/livox/lidar",  # 如有不同，可改成 topic 名称
-            pcd_name="livox_CustomMsg_inten_ascii.pcd"
-        )
+    topic_name = requested_topic or topics[0]
+    if topic_name not in topics:
+        print(f"[ERROR] Topic '{topic_name}' is not a PointCloud2 topic in this bag.", file=sys.stderr)
+        print(f"Available PointCloud2 topics: {', '.join(topics)}", file=sys.stderr)
+        sys.exit(1)
 
+    print(f"[Detect] Using PointCloud2 topic: {topic_name}")
+    pcd_path = convert_pointcloud2_bag_to_pcd(
+        bag_uri=bag_uri,
+        output_dir=output_dir,
+        topic_name=topic_name,
+    )
     if pcd_path is None:
-        print("[ERROR] PCD 生成失败，退出。", file=sys.stderr)
+        print("[ERROR] PCD generation failed.", file=sys.stderr)
         sys.exit(1)
 
-    # 5) 对刚生成的这个 PCD 做交互式选点 + 范围保存
     select_and_save_points(
         pcd_folder=output_dir,
-        target_pcd_name=os.path.basename(pcd_path)
+        target_pcd_name=os.path.basename(pcd_path),
     )
+
+
+if __name__ == "__main__":
+    main()

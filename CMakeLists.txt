@@ -1,24 +1,29 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.8)
 project(fast_calib)
 
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  sensor_msgs
-  pcl_ros
-  pcl_conversions
-  geometry_msgs
-)
-
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(rosbag2_cpp REQUIRED)
+find_package(rosidl_typesupport_cpp REQUIRED)
 find_package(PCL 1.10 REQUIRED)
 find_package(OpenCV REQUIRED)
 
-catkin_package(
-  CATKIN_DEPENDS roscpp sensor_msgs pcl_conversions pcl_ros
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(DEPENDENCIES
+  rclcpp
+  sensor_msgs
+  pcl_conversions
+  rosbag2_cpp
+  rosidl_typesupport_cpp
 )
 
 include_directories(
   include
-  ${catkin_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
@@ -31,15 +36,29 @@ endif()
 
 add_executable(fast_calib src/main.cpp)
 
-target_link_libraries(fast_calib
-  ${catkin_LIBRARIES}
-  ${PCL_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-)
+ament_target_dependencies(fast_calib ${DEPENDENCIES})
+target_link_libraries(fast_calib ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
 
 add_executable(multi_fast_calib src/multi_scene.cpp)
-target_link_libraries(multi_fast_calib
-  ${catkin_LIBRARIES}
-  ${PCL_LIBRARIES}
-  ${OpenCV_LIBRARIES}
+ament_target_dependencies(multi_fast_calib ${DEPENDENCIES})
+target_link_libraries(multi_fast_calib ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+
+install(TARGETS
+  fast_calib
+  multi_fast_calib
+  DESTINATION lib/${PROJECT_NAME}
 )
+
+install(DIRECTORY
+  config
+  launch
+  rviz_cfg
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  scripts/distance_filter_tool.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_package()
