@@ -183,7 +183,9 @@ class QRDetect
           double y = tvecs[i][1];
           double z = tvecs[i][2];
 
-          cv::aruco::drawAxis(imageCopy_, cameraMatrix_, distCoeffs_, rvecs[i],
+          // cv::aruco::drawAxis(imageCopy_, cameraMatrix_, distCoeffs_, rvecs[i],
+          //                     tvecs[i], 0.1);
+          cv::drawFrameAxes(imageCopy_, cameraMatrix_, distCoeffs_, rvecs[i],
                               tvecs[i], 0.1);
 
           // Accumulate pose for initial guess
@@ -223,7 +225,9 @@ class QRDetect
 
         // cout << "board: " <<  tvec[0] << ", "<< tvec[1] << ", " << tvec[2] << std::endl;
 
-        cv::aruco::drawAxis(imageCopy_, cameraMatrix_, distCoeffs_, rvec, tvec, 0.2);
+        // cv::aruco::drawAxis(imageCopy_, cameraMatrix_, distCoeffs_, rvecs[i],
+        //                       tvecs[i], 0.1);
+        cv::drawFrameAxes(imageCopy_, cameraMatrix_, distCoeffs_, rvec, tvec, 0.2);
 
         // Build transformation matrix to calibration target axis
         cv::Mat R(3, 3, cv::DataType<float>::type);
