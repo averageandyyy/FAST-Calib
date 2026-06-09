@@ -45,7 +45,7 @@ DATA ascii
 
 def open_reader(bag_uri):
     reader = rosbag2_py.SequentialReader()
-    storage_options = rosbag2_py.StorageOptions(uri=bag_uri, storage_id="sqlite3")
+    storage_options = rosbag2_py.StorageOptions(uri=bag_uri, storage_id="mcap")
     converter_options = rosbag2_py.ConverterOptions(
         input_serialization_format="cdr",
         output_serialization_format="cdr",
